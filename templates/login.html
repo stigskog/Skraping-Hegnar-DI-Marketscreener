@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Login - Stox Signal Generator{% endblock %}
+{% block content %}
+<div style="max-width: 380px; margin: 60px auto;">
+    <div class="card" style="text-align: center;">
+        <div style="margin-bottom: 28px;">
+            <div style="width: 56px; height: 56px; border-radius: 14px; background: var(--accent-green-bg); display: flex; align-items: center; justify-content: center; margin: 0 auto 16px; font-size: 24px;">
+                &#9776;
+            </div>
+            <h1 style="font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">Stox<span style="color: var(--accent-gold);">.no</span></h1>
+            <p style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">Signal Generator</p>
+        </div>
+        <form method="POST">
+            <div class="form-group" style="text-align: left;">
+                <label>Username</label>
+                <input type="text" name="username" required autofocus autocomplete="username">
+            </div>
+            <div class="form-group" style="text-align: left;">
+                <label>Password</label>
+                <input type="password" name="password" required autocomplete="current-password">
+            </div>
+            <button type="submit" class="btn btn-primary" style="width: 100%; padding: 10px; justify-content: center;">Sign in</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

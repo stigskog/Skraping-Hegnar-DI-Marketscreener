@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Files - Stox Signal Generator{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Files</h1>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div class="card-icon card-icon-gold">&#128193;</div>
+        <h2>Output Files ({{ total_files }})</h2>
+    </div>
+
+    {% if grouped_files %}
+    <!-- Bulk Actions -->
+    <div style="display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
+        <label class="checkbox-label" style="font-size: 13px;">
+            <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)">
+            Select All
+        </label>
+        <div style="margin-left: auto; display: flex; gap: 8px;">
+            <button type="button" class="btn btn-primary btn-sm" onclick="downloadSelected()" id="btn-download" disabled>
+                Download Selected
+            </button>
+            <button type="button" class="btn btn-danger btn-sm" onclick="deleteSelected()" id="btn-delete" disabled>
+                Delete Selected
+            </button>
+        </div>
+    </div>
+
+    {% for day, day_files in grouped_files.items() %}
+    <div style="margin-bottom: 20px;">
+        <h3 style="font-size: 12px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-primary);">
+            {{ day }}
+        </h3>
+        {% for file in day_files %}
+        <div class="file-row" style="display: flex; align-items: center; padding: 8px 12px; border-radius: 6px; margin-bottom: 2px; transition: background 0.1s; cursor: default;"
+             onmouseenter="this.style.background='var(--table-row-hover)'" onmouseleave="this.style.background='transparent'">
+            <label class="checkbox-label" style="flex-shrink: 0; margin-right: 12px;">
+                <input type="checkbox" class="file-cb" value="{{ file.name }}" onchange="updateBulkButtons()">
+            </label>
+            <div style="flex: 1; min-width: 0;">
+                <div style="font-size: 13px; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    {{ file.name }}
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                    {{ file.size }}
+                </div>
+            </div>
+            <a href="{{ url_for('download', filename=file.name) }}" class="btn btn-outline btn-sm" style="flex-shrink: 0;">
+                Download
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+
+    {% else %}
+    <p style="color: var(--text-muted); font-size: 14px;">No output files yet. Run the scraper from the <a href="{{ url_for('dashboard') }}" style="color: var(--accent-gold);">Dashboard</a> to generate files.</p>
+    {% endif %}
+</div>
+
+<script>
+function toggleSelectAll(el) {
+    document.querySelectorAll('.file-cb').forEach(function(cb) { cb.checked = el.checked; });
+    updateBulkButtons();
+}
+
+function getSelected() {
+    var sel = [];
+    document.querySelectorAll('.file-cb:checked').forEach(function(cb) { sel.push(cb.value); });
+    return sel;
+}
+
+function updateBulkButtons() {
+    var sel = getSelected();
+    document.getElementById('btn-download').disabled = sel.length === 0;
+    document.getElementById('btn-delete').disabled = sel.length === 0;
+    var all = document.querySelectorAll('.file-cb');
+    document.getElementById('select-all').checked = all.length > 0 && sel.length === all.length;
+}
+
+function downloadSelected() {
+    var files = getSelected();
+    if (files.length === 0) return;
+    if (files.length === 1) {
+        window.location.href = '/download/' + encodeURIComponent(files[0]);
+        return;
+    }
+    // Multiple: zip download
+    fetch('/api/download_zip', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({files: files})
+    })
+    .then(function(resp) {
+        if (!resp.ok) throw new Error('Download failed');
+        return resp.blob();
+    })
+    .then(function(blob) {
+        var url = window.URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'signals_' + new Date().toISOString().slice(0,10) + '.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    })
+    .catch(function(err) { alert('Download failed: ' + err); });
+}
+
+function deleteSelected() {
+    var files = getSelected();
+    if (files.length === 0) return;
+    if (!confirm('Delete ' + files.length + ' file(s)? This cannot be undone.')) return;
+    fetch('/api/delete_files', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({files: files})
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function() { window.location.reload(); })
+    .catch(function(err) { alert('Delete failed: ' + err); });
+}
+</script>
+{% endblock %}

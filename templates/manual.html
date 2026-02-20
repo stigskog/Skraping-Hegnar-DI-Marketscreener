@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}Manual Classification - Stox Signal Generator{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Manual Classification</h1>
+</div>
+
+{% if not config.ai_api_key %}
+<div class="flash flash-warning">
+    No AI API key configured. <a href="{{ url_for('settings') }}">Go to Settings</a> to set one up before using manual classification.
+</div>
+{% endif %}
+
+<!-- Prompt Card -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-icon card-icon-gold">&#9997;</div>
+        <h2>Classification Prompt</h2>
+        <button type="button" class="btn btn-outline btn-sm" style="margin-left: auto;" onclick="togglePrompt()">
+            <span id="prompt-toggle-text">Show Prompt</span>
+        </button>
+    </div>
+    <div id="prompt-section" style="display: none;">
+        <div class="form-group" style="margin-bottom: 10px;">
+            <textarea id="manual-prompt" rows="16" style="font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.5; resize: vertical;">{{ config.get('manual_prompt', '') or default_prompt }}</textarea>
+            <p class="form-hint">This prompt is separate from the Settings prompt. Customize it for manual text classification.</p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <button type="button" class="btn btn-primary btn-sm" onclick="savePrompt()">Save Prompt</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="resetPrompt()">Reset to Default</button>
+            <span id="prompt-status" style="font-size: 12px; color: var(--accent-green-light); display: none;">Saved</span>
+        </div>
+    </div>
+</div>
+
+<!-- Input Card -->
+<div class="card">
+    <div class="card-header">
+        <div class="card-icon card-icon-green">&#128196;</div>
+        <h2>Paste Raw Data</h2>
+    </div>
+    <div class="form-group">
+        <textarea id="raw-text" rows="12" placeholder="Paste any raw text here - news articles, reports, messages, copy-paste from any source. The AI will extract stock signals from it." style="font-size: 13px; line-height: 1.6; resize: vertical;"></textarea>
+        <div style="display: flex; justify-content: space-between; margin-top: 6px;">
+            <p class="form-hint">Paste any text - messy formatting, mixed languages, any structure. Max 50,000 characters.</p>
+            <span id="char-count" style="font-size: 12px; color: var(--text-muted); white-space: nowrap;">0 / 50,000</span>
+        </div>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center;">
+        <button type="button" class="btn btn-gold" id="classify-btn" onclick="classify()" {% if not config.ai_api_key %}disabled{% endif %}>
+            Classify Signals
+        </button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="clearAll()">Clear</button>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading" style="display: none; margin-top: 16px;">
+        <div class="progress-bar-track">
+            <div class="progress-bar-fill indeterminate"></div>
+        </div>
+        <p style="margin-top: 8px; font-size: 13px; color: var(--text-secondary);">Analyzing text with AI...</p>
+    </div>
+</div>
+
+<!-- Results Card -->
+<div class="card" id="results-card" style="display: none;">
+    <div class="card-header">
+        <div class="card-icon card-icon-green">&#9889;</div>
+        <h2>Signals Found (<span id="signal-count">0</span>)</h2>
+        <button type="button" class="btn btn-primary btn-sm" style="margin-left: auto;" onclick="downloadExcel()" id="download-btn">
+            Download Excel
+        </button>
+    </div>
+    <div style="overflow-x: auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Company</th>
+                    <th>Ticker</th>
+                    <th>Direction</th>
+                    <th>Comment</th>
+                    <th>Country</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+            <tbody id="signals-body"></tbody>
+        </table>
+    </div>
+    <div id="no-signals" style="display: none; padding: 16px 0;">
+        <p style="color: var(--text-muted); font-size: 14px;">No signals found in the provided text. Try pasting different content or adjusting the prompt.</p>
+    </div>
+</div>
+
+<!-- Error display -->
+<div class="flash flash-error" id="error-display" style="display: none;">
+    <span id="error-text"></span>
+</div>
+
+<script>
+var DEFAULT_PROMPT = {{ default_prompt|tojson }};
+var lastSignals = [];
+var promptOpen = false;
+
+// Character counter
+document.getElementById('raw-text').addEventListener('input', function() {
+    var len = this.value.length;
+    var counter = document.getElementById('char-count');
+    counter.textContent = len.toLocaleString() + ' / 50,000';
+    if (len > 50000) {
+        counter.style.color = 'var(--accent-red)';
+    } else if (len > 40000) {
+        counter.style.color = 'var(--accent-gold)';
+    } else {
+        counter.style.color = 'var(--text-muted)';
+    }
+});
+
+function togglePrompt() {
+    promptOpen = !promptOpen;
+    document.getElementById('prompt-section').style.display = promptOpen ? 'block' : 'none';
+    document.getElementById('prompt-toggle-text').textContent = promptOpen ? 'Hide Prompt' : 'Show Prompt';
+}
+
+function savePrompt() {
+    var prompt = document.getElementById('manual-prompt').value;
+    fetch('/api/manual_save_prompt', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({prompt: prompt})
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function() {
+        var status = document.getElementById('prompt-status');
+        status.style.display = 'inline';
+        setTimeout(function() { status.style.display = 'none'; }, 2000);
+    })
+    .catch(function(err) { alert('Failed to save: ' + err); });
+}
+
+function resetPrompt() {
+    if (!confirm('Reset prompt to default? Your customizations will be lost.')) return;
+    document.getElementById('manual-prompt').value = DEFAULT_PROMPT;
+    savePrompt();
+}
+
+function clearAll() {
+    document.getElementById('raw-text').value = '';
+    document.getElementById('char-count').textContent = '0 / 50,000';
+    document.getElementById('char-count').style.color = 'var(--text-muted)';
+    document.getElementById('results-card').style.display = 'none';
+    document.getElementById('error-display').style.display = 'none';
+    lastSignals = [];
+}
+
+function classify() {
+    var text = document.getElementById('raw-text').value.trim();
+    if (!text) {
+        showError('Please paste some text to classify.');
+        return;
+    }
+    if (text.length > 50000) {
+        showError('Text exceeds 50,000 character limit. Please shorten it.');
+        return;
+    }
+
+    var prompt = document.getElementById('manual-prompt').value.trim();
+
+    // UI state
+    document.getElementById('classify-btn').disabled = true;
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('results-card').style.display = 'none';
+    document.getElementById('error-display').style.display = 'none';
+
+    fetch('/api/manual_classify', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text: text, prompt: prompt})
+    })
+    .then(function(resp) { return resp.json().then(function(data) { return {ok: resp.ok, data: data}; }); })
+    .then(function(result) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('classify-btn').disabled = false;
+
+        if (!result.ok) {
+            showError(result.data.error || 'Classification failed');
+            return;
+        }
+
+        lastSignals = result.data.signals || [];
+        renderSignals(lastSignals);
+    })
+    .catch(function(err) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('classify-btn').disabled = false;
+        showError('Network error: ' + err);
+    });
+}
+
+function renderSignals(signals) {
+    var card = document.getElementById('results-card');
+    var tbody = document.getElementById('signals-body');
+    var noSignals = document.getElementById('no-signals');
+
+    card.style.display = 'block';
+    document.getElementById('signal-count').textContent = signals.length;
+
+    if (signals.length === 0) {
+        tbody.innerHTML = '';
+        noSignals.style.display = 'block';
+        document.getElementById('download-btn').style.display = 'none';
+        return;
+    }
+
+    noSignals.style.display = 'none';
+    document.getElementById('download-btn').style.display = 'inline-flex';
+
+    var html = '';
+    signals.forEach(function(s) {
+        var dirClass = s.direction === 'Bullish' ? 'badge-success' : 'badge-failed';
+        html += '<tr>' +
+            '<td style="font-weight: 600;">' + esc(s.company_name || '') + '</td>' +
+            '<td style="font-family: monospace; font-weight: 600;">' + esc(s.ticker || '') + '</td>' +
+            '<td><span class="badge ' + dirClass + '">' + esc(s.direction || '') + '</span></td>' +
+            '<td>' + esc(s.comment || '') + '</td>' +
+            '<td>' + esc(s.country || '') + '</td>' +
+            '<td style="white-space: nowrap;">' + esc(s.time || '-') + '</td>' +
+            '</tr>';
+    });
+    tbody.innerHTML = html;
+
+    // Scroll to results
+    card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function esc(str) {
+    var div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function showError(msg) {
+    document.getElementById('error-text').textContent = msg;
+    document.getElementById('error-display').style.display = 'flex';
+}
+
+function downloadExcel() {
+    if (lastSignals.length === 0) return;
+
+    var btn = document.getElementById('download-btn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    fetch('/api/manual_download', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({signals: lastSignals})
+    })
+    .then(function(resp) {
+        if (!resp.ok) throw new Error('Download failed');
+        return resp.blob();
+    })
+    .then(function(blob) {
+        var url = window.URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'manual_signals_' + new Date().toISOString().slice(0,10) + '.xlsx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+
+        btn.disabled = false;
+        btn.textContent = 'Download Excel';
+    })
+    .catch(function(err) {
+        alert('Download failed: ' + err);
+        btn.disabled = false;
+        btn.textContent = 'Download Excel';
+    });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Settings - Stox Signal Generator{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h1>Settings</h1>
+</div>
+
+<form method="POST">
+    <!-- Login Credentials -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon card-icon-green">&#9881;</div>
+            <h2>Login Credentials</h2>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" name="username" value="{{ config.username }}">
+            </div>
+            <div class="form-group">
+                <label>New Password</label>
+                <input type="password" name="password" placeholder="Leave empty to keep current">
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Provider -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon card-icon-gold">&#10024;</div>
+            <h2>AI Configuration</h2>
+        </div>
+        <div class="form-group">
+            <label>Provider</label>
+            <select name="ai_provider" id="ai_provider" onchange="onProviderChange()">
+                {% for key, prov in providers.items() %}
+                <option value="{{ key }}" {% if config.ai_provider == key %}selected{% endif %}>{{ prov.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label>API Key</label>
+            <input type="password" name="ai_api_key" id="ai_api_key" value="{{ config.ai_api_key }}" placeholder="">
+            <p class="form-hint" id="api_key_hint"></p>
+            <div style="margin-top: 6px;">
+                <button type="button" class="key-help-toggle" id="key_help_toggle" onclick="toggleKeyHelp()">How to get your API key</button>
+            </div>
+            <div class="key-help-content" id="key_help_content"></div>
+        </div>
+        <div class="form-group">
+            <label>Model</label>
+            <select name="ai_model" id="ai_model"></select>
+        </div>
+    </div>
+
+    <!-- AI Prompt & Batch -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon card-icon-green">&#9997;</div>
+            <h2>AI Classification Settings</h2>
+        </div>
+        <div class="form-group">
+            <label>System Prompt</label>
+            <textarea name="system_prompt" rows="14" style="font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; line-height: 1.5; resize: vertical;">{{ config.get('system_prompt', '') or default_prompt }}</textarea>
+            <p class="form-hint">The instruction prompt sent to the AI. Customize to change filtering/classification rules.</p>
+        </div>
+        <div class="form-group">
+            <label>Batch Size</label>
+            <input type="number" name="batch_size" value="{{ config.get('batch_size', 25) }}" min="1" max="100" style="max-width: 200px;">
+            <p class="form-hint">Articles per AI request (default: 25). Lower = more API calls but less chance of hitting token limits.</p>
+        </div>
+    </div>
+
+    <!-- Scheduler -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon card-icon-green">&#9202;</div>
+            <h2>Scheduler</h2>
+        </div>
+        <div class="form-group">
+            <label class="checkbox-label">
+                <input type="checkbox" name="schedule_enabled" {% if config.schedule_enabled %}checked{% endif %}>
+                Enable automatic scheduled runs
+            </label>
+        </div>
+        <div class="form-group">
+            <label>Run interval (minutes)</label>
+            <input type="number" name="schedule_interval" value="{{ config.schedule_interval_minutes }}" min="5" max="1440" style="max-width: 200px;">
+        </div>
+    </div>
+
+    <!-- Sources -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon card-icon-gold">&#9783;</div>
+            <h2>News Sources</h2>
+        </div>
+
+        <!-- Finansavisen -->
+        <div class="source-section">
+            <h3>Finansavisen</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="finansavisen_enabled" {% if config.sources.finansavisen.enabled %}checked{% endif %}>
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Max Pages</label>
+                    <input type="number" name="finansavisen_max_pages" value="{{ config.sources.finansavisen.max_pages }}" min="1" max="20">
+                    <p class="form-hint">50 articles per page</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- DI -->
+        <div class="source-section">
+            <h3>Dagens Industri (DI.se)</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="di_enabled" {% if config.sources.di.enabled %}checked{% endif %}>
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Max Pages</label>
+                    <input type="number" name="di_max_pages" value="{{ config.sources.di.max_pages }}" min="1" max="20">
+                    <p class="form-hint">~20 articles per page</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- MarketScreener -->
+        <div class="source-section">
+            <h3>MarketScreener</h3>
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="marketscreener_enabled" {% if config.sources.marketscreener.enabled %}checked{% endif %}>
+                    Enabled
+                </label>
+                <p class="form-hint" style="margin-top: 8px;">Single page source (no pagination available)</p>
+            </div>
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-gold" style="padding: 10px 28px;">Save Settings</button>
+</form>
+
+<script>
+var PROVIDERS = {{ providers_json|safe }};
+var currentModel = {{ config.ai_model|tojson }};
+
+function onProviderChange() {
+    var provider = document.getElementById('ai_provider').value;
+    var prov = PROVIDERS[provider];
+    if (!prov) return;
+
+    // Update placeholder
+    document.getElementById('ai_api_key').placeholder = prov.key_placeholder;
+
+    // Update hint
+    document.getElementById('api_key_hint').innerHTML =
+        'Get your key from <a href="' + prov.key_link + '" target="_blank">' + prov.label + ' dashboard</a>';
+
+    // Update key help
+    var helpContent = document.getElementById('key_help_content');
+    helpContent.textContent = prov.key_help || 'No instructions available for this provider.';
+    helpContent.classList.remove('visible');
+
+    // Update models
+    var modelSelect = document.getElementById('ai_model');
+    modelSelect.innerHTML = '';
+    prov.models.forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.label;
+        if (m.id === currentModel) opt.selected = true;
+        modelSelect.appendChild(opt);
+    });
+}
+
+function toggleKeyHelp() {
+    var content = document.getElementById('key_help_content');
+    content.classList.toggle('visible');
+    var toggle = document.getElementById('key_help_toggle');
+    if (content.classList.contains('visible')) {
+        toggle.textContent = 'Hide instructions';
+    } else {
+        toggle.textContent = 'How to get your API key';
+    }
+}
+
+onProviderChange();
+</script>
+{% endblock %}
