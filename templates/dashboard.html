@@ -22,6 +22,9 @@
         <button type="button" class="btn btn-outline" onclick="startRun('finansavisen')" {% if not config.ai_api_key %}disabled{% endif %}>Finansavisen</button>
         <button type="button" class="btn btn-outline" onclick="startRun('di')" {% if not config.ai_api_key %}disabled{% endif %}>DI.se</button>
         <button type="button" class="btn btn-outline" onclick="startRun('marketscreener')" {% if not config.ai_api_key %}disabled{% endif %}>MarketScreener</button>
+        <button type="button" class="btn btn-outline" onclick="startRun('advfn')" {% if not config.ai_api_key %}disabled{% endif %}>ADVFN</button>
+        <button type="button" class="btn btn-outline" onclick="startRun('finanzen')" {% if not config.ai_api_key %}disabled{% endif %}>Finanzen.net</button>
+        <button type="button" class="btn btn-outline" onclick="startRun('proinvestor')" {% if not config.ai_api_key %}disabled{% endif %}>ProInvestor</button>
     </div>
     <!-- Progress area -->
     <div class="progress-container" id="progress-container">

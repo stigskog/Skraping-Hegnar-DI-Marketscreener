@@ -143,6 +143,60 @@
                 <p class="form-hint" style="margin-top: 8px;">Single page source (no pagination available)</p>
             </div>
         </div>
+
+        <!-- ADVFN -->
+        <div class="source-section">
+            <h3>ADVFN (uk.advfn.com)</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="advfn_enabled" {% if config.sources.advfn.enabled %}checked{% endif %}>
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Max Pages</label>
+                    <input type="number" name="advfn_max_pages" value="{{ config.sources.advfn.max_pages }}" min="1" max="10">
+                    <p class="form-hint">~18 articles per page</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Finanzen.net -->
+        <div class="source-section">
+            <h3>Finanzen.net</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="finanzen_enabled" {% if config.sources.finanzen.enabled %}checked{% endif %}>
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Max Pages</label>
+                    <input type="number" name="finanzen_max_pages" value="{{ config.sources.finanzen.max_pages }}" min="1" max="20">
+                    <p class="form-hint">~60 articles per page</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ProInvestor -->
+        <div class="source-section">
+            <h3>ProInvestor (proinvestor.com)</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="proinvestor_enabled" {% if config.sources.proinvestor.enabled %}checked{% endif %}>
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>Max Pages</label>
+                    <input type="number" name="proinvestor_max_pages" value="{{ config.sources.proinvestor.max_pages }}" min="1" max="20">
+                    <p class="form-hint">~27 articles per page</p>
+                </div>
+            </div>
+        </div>
     </div>
 
     <button type="submit" class="btn btn-gold" style="padding: 10px 28px;">Save Settings</button>

@@ -5,6 +5,12 @@ import re
 from datetime import datetime, timezone
 import logging
 
+try:
+    from curl_cffi import requests as curl_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+
 logger = logging.getLogger(__name__)
 
 COMMON_HEADERS = {
@@ -183,6 +189,228 @@ def scrape_marketscreener(max_pages=1):
     return articles
 
 
+def scrape_advfn(max_pages=1):
+    """Scrape news from ADVFN newspaper. Returns list of article dicts."""
+    articles = []
+    for page in range(1, max_pages + 1):
+        url = 'https://uk.advfn.com/newspaper' if page == 1 else f'https://uk.advfn.com/newspaper/page/{page}'
+        headers = {
+            **COMMON_HEADERS,
+            'Referer': 'https://uk.advfn.com/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            article_divs = soup.find_all('div', class_='article')
+            if not article_divs:
+                break
+            for art in article_divs:
+                h3 = art.find('h3')
+                link = h3.find('a', href=True) if h3 else None
+                if not link:
+                    continue
+                title = link.get_text(strip=True)
+                if not title or len(title) < 10:
+                    continue
+                href = link.get('href', '')
+
+                # Date from div with class containing 'date'
+                date_el = art.find(class_=lambda x: x and 'date' in x.lower())
+                date_text = date_el.get_text(strip=True) if date_el else ''
+                time_str = ''
+                published = ''
+                if date_text:
+                    # Format: "27 Feb 2026 @ 15:30"
+                    try:
+                        dt = datetime.strptime(date_text, '%d %b %Y @ %H:%M')
+                        time_str = dt.strftime('%H:%M')
+                        published = dt.isoformat()
+                    except:
+                        published = date_text
+
+                # Summary from first <p> in article
+                p_el = art.find('p')
+                summary = p_el.get_text(strip=True)[:200] if p_el else ''
+
+                articles.append({
+                    'source': 'ADVFN',
+                    'title': title,
+                    'summary': summary,
+                    'published': published,
+                    'time': time_str,
+                    'category': '',
+                    'type': 'advfn',
+                    'tickers': [],
+                    'url': href,
+                })
+            logger.info(f"ADVFN page {page}: {len(article_divs)} articles")
+        except Exception as e:
+            logger.error(f"ADVFN page {page} error: {e}")
+            break
+    return articles
+
+
+def scrape_finanzen(max_pages=2):
+    """Scrape news from finanzen.net. Requires curl_cffi for Akamai bypass. Returns list of article dicts."""
+    if not HAS_CURL_CFFI:
+        logger.error("finanzen.net requires curl_cffi package. Install with: pip install curl_cffi")
+        return []
+
+    articles = []
+    seen_urls = set()
+    for page in range(1, max_pages + 1):
+        url = 'https://www.finanzen.net/news/' if page == 1 else f'https://www.finanzen.net/news/?intpagenr={page}'
+        try:
+            resp = curl_requests.get(url, impersonate='chrome', timeout=30)
+            if resp.status_code != 200:
+                logger.error(f"finanzen.net page {page}: status {resp.status_code}")
+                break
+            soup = BeautifulSoup(resp.text, 'html.parser')
+
+            # Featured articles in div.article-layout__list
+            layout_list = soup.find('div', class_='article-layout__list')
+            if layout_list:
+                for art in layout_list.find_all('div', class_='article', recursive=False):
+                    a_el = art.find('a', href=lambda h: h and '/nachricht/' in h)
+                    if not a_el:
+                        continue
+                    href = a_el.get('href', '')
+                    if href and not href.startswith('http'):
+                        href = 'https://www.finanzen.net' + href
+                    if href in seen_urls:
+                        continue
+                    seen_urls.add(href)
+
+                    time_el = art.find('time')
+                    time_str = ''
+                    published = ''
+                    if time_el:
+                        datetime_attr = time_el.get('datetime', '')
+                        published = datetime_attr
+                        time_text = time_el.get_text(strip=True)
+                        # "17:58 Uhr"
+                        m = re.match(r'(\d{1,2}:\d{2})', time_text)
+                        if m:
+                            time_str = m.group(1)
+
+                    raw_text = a_el.get_text(strip=True)
+                    # Remove leading time like "17:58 Uhr"
+                    title = re.sub(r'^\d{1,2}:\d{2}\s*Uhr\s*', '', raw_text)
+
+                    articles.append({
+                        'source': 'Finanzen.net',
+                        'title': title,
+                        'summary': '',
+                        'published': published,
+                        'time': time_str,
+                        'category': '',
+                        'type': 'finanzen',
+                        'tickers': [],
+                        'url': href,
+                    })
+
+            # Table-based articles
+            for row in soup.find_all('tr', class_='table__tr'):
+                a_el = row.find('a', href=lambda h: h and '/nachricht/' in h)
+                if not a_el:
+                    continue
+                href = a_el.get('href', '')
+                if href and not href.startswith('http'):
+                    href = 'https://www.finanzen.net' + href
+                if href in seen_urls:
+                    continue
+                seen_urls.add(href)
+
+                tds = row.find_all('td')
+                time_str = ''
+                title = ''
+                if len(tds) >= 2:
+                    # First TD = time, second TD = title
+                    time_str = tds[0].get_text(strip=True)
+                    title = a_el.get_text(strip=True)
+                elif len(tds) == 1:
+                    raw_text = a_el.get_text(strip=True)
+                    title = re.sub(r'^\d{1,2}:\d{2}\s*Uhr\s*', '', raw_text)
+
+                if not title or len(title) < 10:
+                    continue
+
+                articles.append({
+                    'source': 'Finanzen.net',
+                    'title': title,
+                    'summary': '',
+                    'published': '',
+                    'time': time_str,
+                    'category': '',
+                    'type': 'finanzen',
+                    'tickers': [],
+                    'url': href,
+                })
+
+            logger.info(f"finanzen.net page {page}: {len(articles)} articles total")
+        except Exception as e:
+            logger.error(f"finanzen.net page {page} error: {e}")
+            break
+    return articles
+
+
+def scrape_proinvestor(max_pages=3):
+    """Scrape news from ProInvestor (Danish). Returns list of article dicts."""
+    articles = []
+    headers = {
+        **COMMON_HEADERS,
+        'Referer': 'https://proinvestor.com/',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+    for page in range(1, max_pages + 1):
+        url = 'https://proinvestor.com/alle-aktienyheder/' if page == 1 else f'https://proinvestor.com/alle-aktienyheder/{page}/'
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            container = soup.find('div', class_='bottom row')
+            if not container:
+                break
+            article_ps = container.find_all('p')
+            if not article_ps:
+                break
+            for p in article_ps:
+                title_a = p.find('a', class_='title left')
+                if not title_a:
+                    continue
+                title = title_a.get_text(strip=True)
+                if not title or len(title) < 10:
+                    continue
+                href = title_a.get('href', '')
+                if href and not href.startswith('http'):
+                    href = 'https://proinvestor.com' + href
+
+                time_span = p.find('span', class_='light right')
+                time_text = time_span.get_text(strip=True) if time_span else ''
+
+                source_span = p.find('span', class_='grey')
+                source_name = source_span.get_text(strip=True) if source_span else ''
+
+                articles.append({
+                    'source': 'ProInvestor',
+                    'title': title,
+                    'summary': source_name,
+                    'published': '',
+                    'time': time_text,
+                    'category': source_name,
+                    'type': 'proinvestor',
+                    'tickers': [],
+                    'url': href,
+                })
+            logger.info(f"ProInvestor page {page}: {len(article_ps)} articles")
+        except Exception as e:
+            logger.error(f"ProInvestor page {page} error: {e}")
+            break
+    return articles
+
+
 def scrape_all_sources(config):
     """Scrape all enabled sources based on config. Returns combined article list."""
     all_articles = []
@@ -204,6 +432,21 @@ def scrape_all_sources(config):
         arts = scrape_marketscreener(max_pages=max_p)
         all_articles.extend(arts)
 
+    if sources.get('advfn', {}).get('enabled', True):
+        max_p = sources['advfn'].get('max_pages', 1)
+        arts = scrape_advfn(max_pages=max_p)
+        all_articles.extend(arts)
+
+    if sources.get('finanzen', {}).get('enabled', True):
+        max_p = sources['finanzen'].get('max_pages', 2)
+        arts = scrape_finanzen(max_pages=max_p)
+        all_articles.extend(arts)
+
+    if sources.get('proinvestor', {}).get('enabled', True):
+        max_p = sources['proinvestor'].get('max_pages', 3)
+        arts = scrape_proinvestor(max_pages=max_p)
+        all_articles.extend(arts)
+
     return all_articles
 
 
@@ -220,4 +463,10 @@ def scrape_single_source(source_name, config):
         return scrape_di(max_pages=src.get('max_pages', 3))
     elif source_name == 'marketscreener':
         return scrape_marketscreener(max_pages=src.get('max_pages', 1))
+    elif source_name == 'advfn':
+        return scrape_advfn(max_pages=src.get('max_pages', 1))
+    elif source_name == 'finanzen':
+        return scrape_finanzen(max_pages=src.get('max_pages', 2))
+    elif source_name == 'proinvestor':
+        return scrape_proinvestor(max_pages=src.get('max_pages', 3))
     return []

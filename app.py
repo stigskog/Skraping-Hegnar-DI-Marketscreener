@@ -123,11 +123,11 @@ def settings():
             config['schedule_interval_minutes'] = 30
 
         # Update sources
-        for src_name in ['finansavisen', 'di', 'marketscreener']:
+        for src_name in ['finansavisen', 'di', 'marketscreener', 'advfn', 'finanzen', 'proinvestor']:
             if src_name not in config['sources']:
                 config['sources'][src_name] = {}
             config['sources'][src_name]['enabled'] = request.form.get(f'{src_name}_enabled') == 'on'
-            if src_name != 'marketscreener':
+            if src_name not in ('marketscreener',):
                 try:
                     config['sources'][src_name]['max_pages'] = int(request.form.get(f'{src_name}_max_pages', 3))
                 except:

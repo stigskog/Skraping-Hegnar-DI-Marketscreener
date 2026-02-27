@@ -30,7 +30,22 @@ DEFAULT_CONFIG = {
             'enabled': True,
             'max_pages': 1,
             'url': 'https://www.marketscreener.com/news/',
-        }
+        },
+        'advfn': {
+            'enabled': True,
+            'max_pages': 1,
+            'url': 'https://uk.advfn.com/newspaper',
+        },
+        'finanzen': {
+            'enabled': True,
+            'max_pages': 2,
+            'url': 'https://www.finanzen.net/news/',
+        },
+        'proinvestor': {
+            'enabled': True,
+            'max_pages': 3,
+            'url': 'https://proinvestor.com/alle-aktienyheder/',
+        },
     }
 }
 
