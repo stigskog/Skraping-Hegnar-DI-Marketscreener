@@ -3,7 +3,10 @@ from bs4 import BeautifulSoup
 import json
 import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import logging
+
+OSLO_TZ = ZoneInfo('Europe/Oslo')
 
 try:
     from curl_cffi import requests as curl_requests
@@ -54,6 +57,8 @@ def scrape_finansavisen(max_pages=3, page_size=50):
                 published = art.get('published', '')
                 try:
                     pub_dt = datetime.fromisoformat(published.replace('Z', '+00:00'))
+                    # Convert to Oslo timezone for correct local time
+                    pub_dt = pub_dt.astimezone(OSLO_TZ)
                     time_str = pub_dt.strftime('%H:%M')
                 except:
                     time_str = ''
@@ -356,26 +361,32 @@ def scrape_finanzen(max_pages=2):
     return articles
 
 
-def scrape_proinvestor(max_pages=3):
-    """Scrape news from ProInvestor (Danish). Returns list of article dicts."""
+def scrape_proinvestor(max_pages=3, proxy_token=''):
+    """Scrape news from ProInvestor (Danish). Uses scrape.do proxy to bypass Cloudflare. Returns list of article dicts."""
+    if not proxy_token:
+        logger.error("ProInvestor requires a Scrape.do proxy token. Set it in Settings > News Sources > ProInvestor.")
+        return []
+
     articles = []
-    headers = {
-        **COMMON_HEADERS,
-        'Referer': 'https://proinvestor.com/',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    }
-    for page in range(1, max_pages + 1):
-        url = 'https://proinvestor.com/alle-aktienyheder/' if page == 1 else f'https://proinvestor.com/alle-aktienyheder/{page}/'
+    PAGE_SIZE = 27  # ProInvestor uses offsets in multiples of 27
+    for page in range(max_pages):
+        offset = page * PAGE_SIZE
+        target_url = 'https://proinvestor.com/alle-aktienyheder/' if page == 0 else f'https://proinvestor.com/alle-aktienyheder/{offset}/'
+        proxy_url = f'https://api.scrape.do?token={proxy_token}&url={target_url}'
         try:
-            resp = requests.get(url, headers=headers, timeout=30)
-            resp.raise_for_status()
+            resp = requests.get(proxy_url, timeout=45)
+            if resp.status_code != 200:
+                logger.error(f"ProInvestor page {page+1}: status {resp.status_code}")
+                break
             soup = BeautifulSoup(resp.text, 'html.parser')
             container = soup.find('div', class_='bottom row')
             if not container:
+                logger.warning(f"ProInvestor page {page+1}: no article container found")
                 break
             article_ps = container.find_all('p')
             if not article_ps:
                 break
+            page_count = 0
             for p in article_ps:
                 title_a = p.find('a', class_='title left')
                 if not title_a:
@@ -404,9 +415,10 @@ def scrape_proinvestor(max_pages=3):
                     'tickers': [],
                     'url': href,
                 })
-            logger.info(f"ProInvestor page {page}: {len(article_ps)} articles")
+                page_count += 1
+            logger.info(f"ProInvestor page {page+1}: {page_count} articles")
         except Exception as e:
-            logger.error(f"ProInvestor page {page} error: {e}")
+            logger.error(f"ProInvestor page {page+1} error: {e}")
             break
     return articles
 
@@ -444,7 +456,8 @@ def scrape_all_sources(config):
 
     if sources.get('proinvestor', {}).get('enabled', True):
         max_p = sources['proinvestor'].get('max_pages', 3)
-        arts = scrape_proinvestor(max_pages=max_p)
+        proxy_token = sources.get('proinvestor', {}).get('proxy_token', '')
+        arts = scrape_proinvestor(max_pages=max_p, proxy_token=proxy_token)
         all_articles.extend(arts)
 
     return all_articles
@@ -468,5 +481,5 @@ def scrape_single_source(source_name, config):
     elif source_name == 'finanzen':
         return scrape_finanzen(max_pages=src.get('max_pages', 2))
     elif source_name == 'proinvestor':
-        return scrape_proinvestor(max_pages=src.get('max_pages', 3))
+        return scrape_proinvestor(max_pages=src.get('max_pages', 3), proxy_token=src.get('proxy_token', ''))
     return []

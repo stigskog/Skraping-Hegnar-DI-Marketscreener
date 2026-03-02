@@ -3,6 +3,35 @@ import json
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'config.json')
 
+DEFAULT_COUNTRIES = [
+    {'code': 'NO', 'label': 'Norske aksjer (Oslo Børs)', 'exchange': 'Oslo Børs', 'region': 'Norway'},
+    {'code': 'SE', 'label': 'Svenske aksjer (Stockholmsbörsen)', 'exchange': 'Stockholm', 'region': 'Sweden'},
+    {'code': 'DK', 'label': 'Danske aksjer (København)', 'exchange': 'Copenhagen', 'region': 'Denmark'},
+    {'code': 'FI', 'label': 'Finske aksjer (Helsinki)', 'exchange': 'Helsinki', 'region': 'Finland'},
+    {'code': 'US', 'label': 'Amerikanske aksjer (USA)', 'exchange': 'US exchanges', 'region': 'United States'},
+    {'code': 'GE', 'label': 'Tyske aksjer (Frankfurt/XETRA)', 'exchange': 'XETRA, Frankfurt', 'region': 'Germany'},
+    {'code': 'UK', 'label': 'Britiske aksjer (London)', 'exchange': 'London Stock Exchange', 'region': 'United Kingdom'},
+]
+
+# Flag emojis for country codes
+COUNTRY_FLAGS = {
+    'NO': '\U0001f1f3\U0001f1f4',
+    'SE': '\U0001f1f8\U0001f1ea',
+    'DK': '\U0001f1e9\U0001f1f0',
+    'FI': '\U0001f1eb\U0001f1ee',
+    'US': '\U0001f1fa\U0001f1f8',
+    'GE': '\U0001f1e9\U0001f1ea',
+    'UK': '\U0001f1ec\U0001f1e7',
+    'FR': '\U0001f1eb\U0001f1f7',
+    'NL': '\U0001f1f3\U0001f1f1',
+    'CH': '\U0001f1e8\U0001f1ed',
+    'ES': '\U0001f1ea\U0001f1f8',
+    'IT': '\U0001f1ee\U0001f1f9',
+    'CA': '\U0001f1e8\U0001f1e6',
+    'JP': '\U0001f1ef\U0001f1f5',
+    'AU': '\U0001f1e6\U0001f1fa',
+}
+
 DEFAULT_CONFIG = {
     'username': 'admin',
     'password': 'admin123',
@@ -14,6 +43,7 @@ DEFAULT_CONFIG = {
     'manual_prompt': '',
     'schedule_enabled': False,
     'schedule_interval_minutes': 30,
+    'countries': DEFAULT_COUNTRIES,
     'sources': {
         'finansavisen': {
             'enabled': True,
@@ -56,6 +86,9 @@ def load_config():
             saved = json.load(f)
         merged = {**DEFAULT_CONFIG, **saved}
         merged['sources'] = {**DEFAULT_CONFIG['sources'], **saved.get('sources', {})}
+        # Keep saved countries if they exist, otherwise use defaults
+        if 'countries' not in saved:
+            merged['countries'] = DEFAULT_COUNTRIES
         return merged
     return DEFAULT_CONFIG.copy()
 

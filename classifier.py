@@ -55,9 +55,9 @@ AI_PROVIDERS = {
     },
 }
 
-SYSTEM_PROMPT = """You are a Nordic stock market signal analyst. You receive raw financial news articles and must:
+SYSTEM_PROMPT_TEMPLATE = """You are a stock market signal analyst. You receive raw financial news articles and must:
 
-1. FILTER: Only keep news about LISTED companies (on Oslo Børs, Stockholm, Copenhagen, Helsinki, or major US exchanges) with a concrete catalyst:
+1. FILTER: Only keep news about LISTED companies with a concrete catalyst:
    - Analyst upgrade/downgrade or price target change
    - Insider buying/selling
    - Earnings report (quarterly/annual results)
@@ -73,14 +73,11 @@ SYSTEM_PROMPT = """You are a Nordic stock market signal analyst. You receive raw
 
 2. CLASSIFY each signal as "Bullish" or "Bearish" based on the catalyst.
 
-3. ASSIGN COUNTRY based on where the company is primarily listed:
-   - "NO" for Oslo Børs (Norway)
-   - "SE" for Stockholm (Sweden)
-   - "DK" for Copenhagen (Denmark)
-   - "FI" for Helsinki (Finland)
-   - "US" for US exchanges
+3. ASSIGN COUNTRY strictly from this list only:
+{country_list}
+   Do NOT default to US if the company is European. Ignore ADRs.
 
-4. TRANSLATE everything to Norwegian. Swedish, English, and Danish text must be translated to Norwegian.
+4. TRANSLATE everything to Norwegian. Swedish, English, German, and Danish text must be translated to Norwegian.
 
 5. For each signal, extract:
    - company_name: Full company name
@@ -88,10 +85,27 @@ SYSTEM_PROMPT = """You are a Nordic stock market signal analyst. You receive raw
    - direction: "Bullish" or "Bearish"
    - comment: Short Norwegian description of the catalyst (max 80 chars)
    - time: Time of the news (HH:MM format)
-   - country: Country code (NO, SE, DK, FI, US)
+   - country: Country code ({country_codes})
 
 Return a JSON array of signal objects. If no valid signals found, return an empty array [].
 IMPORTANT: Only return the JSON array, nothing else. No markdown, no code blocks."""
+
+
+def build_system_prompt(countries=None):
+    """Build the system prompt dynamically from the configured countries list."""
+    if not countries:
+        from config import DEFAULT_COUNTRIES
+        countries = DEFAULT_COUNTRIES
+    lines = []
+    for c in countries:
+        lines.append(f'   - "{c["code"]}" = {c["exchange"]} ({c["region"]})')
+    country_list = '\n'.join(lines)
+    country_codes = ', '.join(c['code'] for c in countries)
+    return SYSTEM_PROMPT_TEMPLATE.format(country_list=country_list, country_codes=country_codes)
+
+
+# Default prompt for backward compatibility
+SYSTEM_PROMPT = build_system_prompt()
 
 BATCH_SIZE = 25
 

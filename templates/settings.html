@@ -71,6 +71,43 @@
         </div>
     </div>
 
+    <!-- Countries / Markets -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-icon card-icon-gold">&#127758;</div>
+            <h2>Countries / Markets</h2>
+        </div>
+        <p class="form-hint" style="margin-bottom: 14px;">Configure which stock exchanges and countries the AI should look for. Adding/removing countries here automatically updates the AI prompt and Excel output sections.</p>
+
+        <div id="countries-list" style="margin-bottom: 16px;"></div>
+
+        <div style="border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 10px; background: rgba(255,255,255,0.03);">
+            <h3 style="margin: 0 0 10px 0; font-size: 13px; color: var(--text-muted);">Add New Country</h3>
+            <div class="form-row">
+                <div class="form-group" style="flex: 0 0 80px;">
+                    <label style="font-size: 12px;">Code</label>
+                    <input type="text" id="new-country-code" placeholder="e.g. FR" maxlength="3" style="text-transform: uppercase;">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label style="font-size: 12px;">Label (Norwegian)</label>
+                    <input type="text" id="new-country-label" placeholder="e.g. Franske aksjer (Paris)">
+                </div>
+                <div class="form-group" style="flex: 0 0 180px;">
+                    <label style="font-size: 12px;">Exchange</label>
+                    <input type="text" id="new-country-exchange" placeholder="e.g. Euronext Paris">
+                </div>
+                <div class="form-group" style="flex: 0 0 140px;">
+                    <label style="font-size: 12px;">Region</label>
+                    <input type="text" id="new-country-region" placeholder="e.g. France">
+                </div>
+                <div class="form-group" style="flex: 0 0 auto; display: flex; align-items: flex-end;">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="addCountry()" style="margin-bottom: 4px;">+ Add</button>
+                </div>
+            </div>
+        </div>
+        <input type="hidden" name="countries_json" id="countries-json">
+    </div>
+
     <!-- Scheduler -->
     <div class="card">
         <div class="card-header">
@@ -196,6 +233,19 @@
                     <p class="form-hint">~27 articles per page</p>
                 </div>
             </div>
+            <div class="form-group" style="margin-top: 10px;">
+                <label>Scrape.do Proxy Token</label>
+                <input type="password" name="proinvestor_proxy_token" value="{{ config.sources.proinvestor.get('proxy_token', '') }}" placeholder="Paste your Scrape.do token here">
+                <p class="form-hint">Required for ProInvestor (Cloudflare-protected site). <a href="https://scrape.do?fpr=python_automation" target="_blank" style="color: var(--accent-gold);">Get your token from Scrape.do</a></p>
+                <div style="margin-top: 6px;">
+                    <button type="button" class="key-help-toggle" onclick="toggleProxyHelp()">How to get your Scrape.do token</button>
+                </div>
+                <div class="key-help-content" id="proxy_help_content">1. Go to scrape.do and create a free account
+2. After signing in, go to your Dashboard
+3. Your API token is shown on the main dashboard page
+4. Copy the token and paste it here
+5. Free plan includes 1,000 requests/month</div>
+            </div>
         </div>
     </div>
 
@@ -246,6 +296,73 @@ function toggleKeyHelp() {
     }
 }
 
+function toggleProxyHelp() {
+    var content = document.getElementById('proxy_help_content');
+    content.classList.toggle('visible');
+}
+
 onProviderChange();
+
+// === Countries Management ===
+var countries = {{ config.get('countries', [])|tojson }};
+var countryFlags = {{ country_flags|default({})|tojson }};
+
+function renderCountries() {
+    var list = document.getElementById('countries-list');
+    list.innerHTML = '';
+    countries.forEach(function(c, idx) {
+        var flag = countryFlags[c.code] || '';
+        var row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 6px; margin-bottom: 4px; background: rgba(255,255,255,0.03); border: 1px solid var(--border);';
+        row.innerHTML =
+            '<span style="font-size: 18px; width: 28px; text-align: center;">' + flag + '</span>' +
+            '<strong style="width: 40px; color: var(--accent-gold);">' + c.code + '</strong>' +
+            '<span style="flex: 1; font-size: 13px;">' + c.label + '</span>' +
+            '<span style="color: var(--text-muted); font-size: 12px; width: 160px;">' + c.exchange + '</span>' +
+            '<span style="color: var(--text-muted); font-size: 12px; width: 110px;">' + c.region + '</span>' +
+            '<button type="button" class="btn btn-danger btn-sm" onclick="removeCountry(' + idx + ')" style="padding: 2px 8px; font-size: 11px;">Remove</button>';
+        list.appendChild(row);
+    });
+    document.getElementById('countries-json').value = JSON.stringify(countries);
+}
+
+function addCountry() {
+    var code = document.getElementById('new-country-code').value.trim().toUpperCase();
+    var label = document.getElementById('new-country-label').value.trim();
+    var exchange = document.getElementById('new-country-exchange').value.trim();
+    var region = document.getElementById('new-country-region').value.trim();
+    if (!code || !label || !exchange || !region) {
+        alert('Please fill in all fields (Code, Label, Exchange, Region)');
+        return;
+    }
+    if (code.length > 3) {
+        alert('Country code must be 1-3 characters');
+        return;
+    }
+    // Check for duplicate
+    for (var i = 0; i < countries.length; i++) {
+        if (countries[i].code === code) {
+            alert('Country code "' + code + '" already exists');
+            return;
+        }
+    }
+    countries.push({code: code, label: label, exchange: exchange, region: region});
+    renderCountries();
+    // Clear inputs
+    document.getElementById('new-country-code').value = '';
+    document.getElementById('new-country-label').value = '';
+    document.getElementById('new-country-exchange').value = '';
+    document.getElementById('new-country-region').value = '';
+}
+
+function removeCountry(idx) {
+    var c = countries[idx];
+    if (confirm('Remove ' + c.code + ' (' + c.label + ')?')) {
+        countries.splice(idx, 1);
+        renderCountries();
+    }
+}
+
+renderCountries();
 </script>
 {% endblock %}

@@ -6,14 +6,22 @@ import logging
 import zipfile
 import threading
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from collections import OrderedDict
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, jsonify
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from flask_apscheduler import APScheduler
-from config import load_config, save_config
+from config import load_config, save_config, DEFAULT_COUNTRIES, COUNTRY_FLAGS
 from scrapers import scrape_all_sources, scrape_single_source
-from classifier import classify_articles, call_ai, AI_PROVIDERS, SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
+from classifier import classify_articles, call_ai, AI_PROVIDERS, build_system_prompt, SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT
 from excel_generator import generate_excel
+
+# Oslo timezone
+OSLO_TZ = ZoneInfo('Europe/Oslo')
+
+def oslo_now():
+    """Get current time in Oslo timezone."""
+    return datetime.now(tz=OSLO_TZ)
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -122,6 +130,16 @@ def settings():
         except:
             config['schedule_interval_minutes'] = 30
 
+        # Update countries from JSON input
+        countries_json = request.form.get('countries_json', '').strip()
+        if countries_json:
+            try:
+                countries = json.loads(countries_json)
+                if isinstance(countries, list) and len(countries) > 0:
+                    config['countries'] = countries
+            except json.JSONDecodeError:
+                pass
+
         # Update sources
         for src_name in ['finansavisen', 'di', 'marketscreener', 'advfn', 'finanzen', 'proinvestor']:
             if src_name not in config['sources']:
@@ -135,6 +153,11 @@ def settings():
             else:
                 config['sources'][src_name]['max_pages'] = 1
 
+        # Save ProInvestor proxy token
+        proxy_token = request.form.get('proinvestor_proxy_token', '').strip()
+        if proxy_token:
+            config['sources']['proinvestor']['proxy_token'] = proxy_token
+
         save_config(config)
         update_scheduler(config)
         flash('Settings saved', 'success')
@@ -144,9 +167,13 @@ def settings():
                       'key_link': v['key_link'], 'key_help': v.get('key_help', ''),
                       'models': v['models']}
                  for k, v in AI_PROVIDERS.items()}
+    # Build the default system prompt dynamically based on configured countries
+    countries = config.get('countries', DEFAULT_COUNTRIES)
+    default_prompt = build_system_prompt(countries)
     return render_template('settings.html', config=config, providers=providers,
                            providers_json=json.dumps(providers),
-                           default_prompt=DEFAULT_SYSTEM_PROMPT)
+                           default_prompt=default_prompt,
+                           country_flags=COUNTRY_FLAGS)
 
 
 @app.route('/files')
@@ -204,10 +231,11 @@ def api_start_run():
     if not config.get('ai_api_key'):
         return jsonify({'error': 'No AI API key configured'}), 400
 
-    run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+    now = oslo_now()
+    run_id = now.strftime('%Y%m%d_%H%M%S')
     run_data = {
         'id': run_id,
-        'started': datetime.now().isoformat(),
+        'started': now.isoformat(),
         'source': source,
         'status': 'scraping',
         'phase': 'Scraping articles...',
@@ -273,7 +301,7 @@ def api_download_zip():
                 zf.write(fpath, safe_name)
     memory_file.seek(0)
 
-    zip_name = f'signals_{datetime.now().strftime("%Y%m%d_%H%M%S")}.zip'
+    zip_name = f'signals_{oslo_now().strftime("%Y%m%d_%H%M%S")}.zip'
     return send_file(memory_file, mimetype='application/zip', as_attachment=True, download_name=zip_name)
 
 
@@ -303,10 +331,11 @@ def run_scrape():
         flash('Please set your AI API key in Settings first', 'error')
         return redirect(url_for('dashboard'))
 
-    run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+    now = oslo_now()
+    run_id = now.strftime('%Y%m%d_%H%M%S')
     run_data = {
         'id': run_id,
-        'started': datetime.now().isoformat(),
+        'started': now.isoformat(),
         'source': source,
         'status': 'scraping',
         'phase': 'Scraping articles...',
@@ -355,7 +384,13 @@ def delete_run(run_id):
     return redirect(url_for('dashboard'))
 
 
-MANUAL_DEFAULT_PROMPT = """You are a stock market signal analyst. The user will paste raw text (news, reports, messages, etc.) in any format. Your job is to:
+def build_manual_prompt(countries=None):
+    """Build the manual classification prompt with configured countries."""
+    if not countries:
+        countries = DEFAULT_COUNTRIES
+    country_lines = ', '.join(f'"{c["code"]}" for {c["exchange"]} ({c["region"]})' for c in countries)
+    country_codes = ', '.join(c['code'] for c in countries)
+    return f"""You are a stock market signal analyst. The user will paste raw text (news, reports, messages, etc.) in any format. Your job is to:
 
 1. EXTRACT any mentions of listed companies with a concrete catalyst:
    - Analyst upgrade/downgrade or price target change
@@ -374,9 +409,7 @@ MANUAL_DEFAULT_PROMPT = """You are a stock market signal analyst. The user will 
 2. CLASSIFY each signal as "Bullish" or "Bearish" based on the catalyst.
 
 3. ASSIGN COUNTRY based on where the company is primarily listed:
-   - "NO" for Oslo Børs (Norway), "SE" for Stockholm (Sweden)
-   - "DK" for Copenhagen (Denmark), "FI" for Helsinki (Finland)
-   - "US" for US exchanges, "OTHER" for any other
+   - {country_lines}
 
 4. TRANSLATE everything to Norwegian.
 
@@ -386,18 +419,23 @@ MANUAL_DEFAULT_PROMPT = """You are a stock market signal analyst. The user will 
    - direction: "Bullish" or "Bearish"
    - comment: Short Norwegian description of the catalyst (max 80 chars)
    - time: Time if mentioned (HH:MM format), otherwise ""
-   - country: Country code (NO, SE, DK, FI, US, OTHER)
+   - country: Country code ({country_codes})
 
 Return a JSON array of signal objects. If no valid signals found, return an empty array [].
 IMPORTANT: Only return the JSON array, nothing else. No markdown, no code blocks."""
+
+
+MANUAL_DEFAULT_PROMPT = build_manual_prompt()
 
 
 @app.route('/manual')
 @login_required
 def manual():
     config = load_config()
+    countries = config.get('countries', DEFAULT_COUNTRIES)
+    default_prompt = build_manual_prompt(countries)
     return render_template('manual.html', config=config,
-                           default_prompt=MANUAL_DEFAULT_PROMPT)
+                           default_prompt=default_prompt)
 
 
 @app.route('/api/manual_classify', methods=['POST'])
@@ -419,7 +457,8 @@ def api_manual_classify():
     if not config.get('ai_api_key'):
         return jsonify({'error': 'No AI API key configured. Go to Settings to set one.'}), 400
 
-    prompt = custom_prompt if custom_prompt else MANUAL_DEFAULT_PROMPT
+    countries = config.get('countries', DEFAULT_COUNTRIES)
+    prompt = custom_prompt if custom_prompt else build_manual_prompt(countries)
 
     messages = [
         {"role": "system", "content": prompt},
@@ -474,7 +513,9 @@ def api_manual_download():
     if not signals:
         return jsonify({'error': 'No signals to download'}), 400
 
-    excel_path = generate_excel(signals)
+    config = load_config()
+    countries = config.get('countries')
+    excel_path = generate_excel(signals, countries=countries)
     return send_file(excel_path, as_attachment=True,
                      download_name=os.path.basename(excel_path))
 
@@ -486,7 +527,7 @@ def _add_log(run_data, message):
     if 'logs' not in run_data:
         run_data['logs'] = []
     run_data['logs'].append({
-        'ts': datetime.now().strftime('%H:%M:%S'),
+        'ts': oslo_now().strftime('%H:%M:%S'),
         'msg': message
     })
     save_run(run_data)
@@ -497,7 +538,7 @@ def _check_stopped(run_data, stop_event):
     if stop_event and stop_event.is_set():
         run_data['status'] = 'stopped'
         run_data['phase'] = 'Stopped by user'
-        run_data['completed'] = datetime.now().isoformat()
+        run_data['completed'] = oslo_now().isoformat()
         _add_log(run_data, 'Run stopped by user')
         return True
     return False
@@ -530,7 +571,7 @@ def _background_run(run_id, source, config, stop_event=None):
             run_data['status'] = 'completed'
             run_data['phase'] = 'Done'
             run_data['error'] = 'No articles found'
-            run_data['completed'] = datetime.now().isoformat()
+            run_data['completed'] = oslo_now().isoformat()
             _add_log(run_data, 'No articles found. Run completed.')
             return
 
@@ -552,13 +593,19 @@ def _background_run(run_id, source, config, stop_event=None):
         def stop_check():
             return stop_event.is_set() if stop_event else False
 
+        # Use custom prompt if set, otherwise build from configured countries
+        custom_prompt = config.get('system_prompt') or None
+        if not custom_prompt:
+            countries = config.get('countries', DEFAULT_COUNTRIES)
+            custom_prompt = build_system_prompt(countries)
+
         signals = classify_articles(
             articles,
             api_key=config['ai_api_key'],
             model=config.get('ai_model', 'deepseek-chat'),
             provider=config.get('ai_provider', 'deepseek'),
             on_progress=on_progress,
-            system_prompt=config.get('system_prompt') or None,
+            system_prompt=custom_prompt,
             batch_size=config.get('batch_size') or None,
             stop_check=stop_check,
         )
@@ -573,7 +620,7 @@ def _background_run(run_id, source, config, stop_event=None):
             run_data['status'] = 'completed'
             run_data['phase'] = 'Done'
             run_data['error'] = 'No signals extracted (AI returned empty)'
-            run_data['completed'] = datetime.now().isoformat()
+            run_data['completed'] = oslo_now().isoformat()
             _add_log(run_data, 'No signals extracted. Run completed.')
             return
 
@@ -583,11 +630,12 @@ def _background_run(run_id, source, config, stop_event=None):
         _add_log(run_data, f'Generating Excel ({len(signals)} signals)')
         save_run(run_data)
 
-        excel_path = generate_excel(signals)
+        countries = config.get('countries')
+        excel_path = generate_excel(signals, countries=countries)
         run_data['excel_file'] = os.path.basename(excel_path)
         run_data['status'] = 'completed'
         run_data['phase'] = 'Done'
-        run_data['completed'] = datetime.now().isoformat()
+        run_data['completed'] = oslo_now().isoformat()
         _add_log(run_data, f'Excel saved: {os.path.basename(excel_path)}')
         _add_log(run_data, f'Run completed: {len(articles)} articles, {len(signals)} signals')
 
@@ -598,7 +646,7 @@ def _background_run(run_id, source, config, stop_event=None):
         run_data['status'] = 'failed'
         run_data['phase'] = 'Failed'
         run_data['error'] = str(e)
-        run_data['completed'] = datetime.now().isoformat()
+        run_data['completed'] = oslo_now().isoformat()
         _add_log(run_data, f'ERROR: {str(e)}')
     finally:
         save_run(run_data)
@@ -640,10 +688,11 @@ def scheduled_run():
             logger.warning("Scheduled run skipped: no API key")
             return
 
-        run_id = datetime.now().strftime('%Y%m%d_%H%M%S')
+        now = oslo_now()
+        run_id = now.strftime('%Y%m%d_%H%M%S')
         run_data = {
             'id': run_id,
-            'started': datetime.now().isoformat(),
+            'started': now.isoformat(),
             'source': 'all (scheduled)',
             'status': 'scraping',
             'phase': 'Scraping articles...',
@@ -672,13 +721,19 @@ def scheduled_run():
                     run_data['signal_count'] = signals_so_far
                     _add_log(run_data, f'Batch {batch_num}/{total_batches} done - {signals_so_far} signals')
 
+                # Use custom prompt if set, otherwise build from configured countries
+                sched_prompt = config.get('system_prompt') or None
+                if not sched_prompt:
+                    sched_countries = config.get('countries', DEFAULT_COUNTRIES)
+                    sched_prompt = build_system_prompt(sched_countries)
+
                 signals = classify_articles(
                     articles,
                     api_key=config['ai_api_key'],
                     model=config.get('ai_model', 'deepseek-chat'),
                     provider=config.get('ai_provider', 'deepseek'),
                     on_progress=on_progress,
-                    system_prompt=config.get('system_prompt') or None,
+                    system_prompt=sched_prompt,
                     batch_size=config.get('batch_size') or None,
                 )
                 run_data['signal_count'] = len(signals)
@@ -688,13 +743,14 @@ def scheduled_run():
                     run_data['status'] = 'generating'
                     run_data['phase'] = 'Generating Excel...'
                     save_run(run_data)
-                    excel_path = generate_excel(signals)
+                    countries = config.get('countries')
+                    excel_path = generate_excel(signals, countries=countries)
                     run_data['excel_file'] = os.path.basename(excel_path)
                     _add_log(run_data, f'Excel saved: {os.path.basename(excel_path)}')
 
             run_data['status'] = 'completed'
             run_data['phase'] = 'Done'
-            run_data['completed'] = datetime.now().isoformat()
+            run_data['completed'] = oslo_now().isoformat()
             _add_log(run_data, 'Scheduled run completed')
             save_run(run_data)
             logger.info(f"Scheduled run {run_id}: {run_data['article_count']} articles, {run_data['signal_count']} signals")
@@ -703,7 +759,7 @@ def scheduled_run():
             run_data['status'] = 'failed'
             run_data['phase'] = 'Failed'
             run_data['error'] = str(e)
-            run_data['completed'] = datetime.now().isoformat()
+            run_data['completed'] = oslo_now().isoformat()
             _add_log(run_data, f'ERROR: {str(e)}')
             save_run(run_data)
 

@@ -2,6 +2,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import os
 import logging
 
@@ -42,14 +43,25 @@ FONT_NEUTRAL = Font(name='Arial', size=9, bold=False, color=COLOR_NEUTRAL)
 ALIGN_LEFT = Alignment(horizontal='left', vertical='center')
 ALIGN_CENTER = Alignment(horizontal='center', vertical='center')
 
-# Country config
-COUNTRY_SECTIONS = [
-    ('NO', '\U0001f1f3\U0001f1f4 Norske aksjer (Oslo B\u00f8rs)'),
-    ('SE', '\U0001f1f8\U0001f1ea Svenske aksjer (Stockholmsb\u00f6rsen)'),
-    ('DK', '\U0001f1e9\U0001f1f0 Danske aksjer (K\u00f8benhavn)'),
-    ('FI', '\U0001f1eb\U0001f1ee Finske aksjer (Helsinki)'),
-    ('US', '\U0001f1fa\U0001f1f8 Amerikanske aksjer (USA)'),
-]
+# Oslo timezone
+OSLO_TZ = ZoneInfo('Europe/Oslo')
+
+
+def get_country_sections(countries=None):
+    """Build country sections list from configured countries."""
+    from config import COUNTRY_FLAGS, DEFAULT_COUNTRIES
+    if not countries:
+        countries = DEFAULT_COUNTRIES
+    sections = []
+    for c in countries:
+        flag = COUNTRY_FLAGS.get(c['code'], '')
+        label = c.get('label', c['code'])
+        sections.append((c['code'], f'{flag} {label}' if flag else label))
+    return sections
+
+
+# Default sections for backward compatibility
+COUNTRY_SECTIONS = get_country_sections()
 
 
 def get_pct_font(pct_str, is_bearish=False):
@@ -69,13 +81,14 @@ def get_pct_font(pct_str, is_bearish=False):
         return FONT_DATA_BOLD
 
 
-def generate_excel(signals, output_path=None):
+def generate_excel(signals, output_path=None, countries=None):
     """Generate the Excel file matching the exact Stox.no format.
 
     signals: list of dicts with keys:
         company_name, ticker, direction, comment, time, country, pct_change (optional)
+    countries: list of country config dicts (optional, uses defaults if not provided)
     """
-    now = datetime.now()
+    now = datetime.now(tz=OSLO_TZ)
     days_no = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'L\u00f8rdag', 'S\u00f8ndag']
     months_no = ['', 'januar', 'februar', 'mars', 'april', 'mai', 'juni',
                  'juli', 'august', 'september', 'oktober', 'november', 'desember']
@@ -129,8 +142,11 @@ def generate_excel(signals, output_path=None):
             country_signals[country] = []
         country_signals[country].append(sig)
 
+    # Build country sections from config
+    sections = get_country_sections(countries) if countries else COUNTRY_SECTIONS
+
     # Generate sections for each country
-    for country_code, section_title in COUNTRY_SECTIONS:
+    for country_code, section_title in sections:
         sigs = country_signals.get(country_code, [])
         if not sigs:
             continue
