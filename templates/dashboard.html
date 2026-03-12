@@ -91,6 +91,9 @@
                         {% if run.excel_file %}
                         <a href="{{ url_for('download', filename=run.excel_file) }}" class="btn btn-primary btn-sm">Download</a>
                         {% endif %}
+                        {% if run.get('has_raw_text') %}
+                        <button type="button" class="btn btn-outline btn-sm" onclick="showRawText('{{ run.id }}')">Raw Text</button>
+                        {% endif %}
                         {% if run.error %}
                         <span style="color: var(--accent-red); font-size: 12px;" title="{{ run.error }}">{{ run.error[:30] }}{% if run.error|length > 30 %}...{% endif %}</span>
                         {% endif %}
@@ -107,6 +110,20 @@
     {% else %}
     <p style="color: var(--text-muted); font-size: 14px;">No runs yet. Click "Run All Sources" to get started.</p>
     {% endif %}
+    </div>
+</div>
+
+<!-- Raw Text Modal -->
+<div id="raw-text-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:200; align-items:center; justify-content:center; padding:24px;">
+    <div style="background:var(--bg-card); border:1px solid var(--border-card); border-radius:12px; width:100%; max-width:900px; max-height:90vh; display:flex; flex-direction:column; box-shadow:var(--shadow-lg);">
+        <div style="padding:16px 20px; border-bottom:1px solid var(--border-primary); display:flex; justify-content:space-between; align-items:center;">
+            <h3 style="font-size:15px; font-weight:700; color:var(--text-primary);">Raw Scraped Articles</h3>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button id="raw-text-copy-btn" class="btn btn-gold btn-sm" onclick="copyRawText()" disabled>Copy to Clipboard</button>
+                <button class="btn btn-outline btn-sm" onclick="closeRawTextModal()">Close</button>
+            </div>
+        </div>
+        <pre id="raw-text-content" style="padding:20px; margin:0; overflow:auto; flex:1; font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,Courier,monospace; font-size:13px; line-height:1.6; color:var(--text-primary); background:var(--bg-input); white-space:pre-wrap; word-wrap:break-word;"></pre>
     </div>
 </div>
 
@@ -248,6 +265,63 @@ function renderLogs(newLogs) {
         terminal.appendChild(line);
     });
     terminal.scrollTop = terminal.scrollHeight;
+}
+
+// ============ Raw Text Modal ============
+function showRawText(runId) {
+    var modal = document.getElementById('raw-text-modal');
+    var content = document.getElementById('raw-text-content');
+    var copyBtn = document.getElementById('raw-text-copy-btn');
+    content.textContent = 'Loading...';
+    copyBtn.textContent = 'Copy to Clipboard';
+    copyBtn.disabled = true;
+    modal.style.display = 'flex';
+
+    fetch('/api/raw_text/' + runId)
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+        if (data.error) {
+            content.textContent = 'Error: ' + data.error;
+        } else {
+            content.textContent = data.text;
+            copyBtn.disabled = false;
+        }
+    })
+    .catch(function(err) {
+        content.textContent = 'Failed to load: ' + err;
+    });
+}
+
+function closeRawTextModal() {
+    document.getElementById('raw-text-modal').style.display = 'none';
+}
+
+document.getElementById('raw-text-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeRawTextModal();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeRawTextModal();
+});
+
+function copyRawText() {
+    var content = document.getElementById('raw-text-content');
+    var btn = document.getElementById('raw-text-copy-btn');
+    navigator.clipboard.writeText(content.textContent).then(function() {
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = 'Copy to Clipboard'; }, 2000);
+    }).catch(function() {
+        // Fallback for older browsers
+        var textarea = document.createElement('textarea');
+        textarea.value = content.textContent;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = 'Copy to Clipboard'; }, 2000);
+    });
 }
 
 // On page load, check if any runs are still active

@@ -269,6 +269,19 @@ def api_run_status(run_id):
     return jsonify(run_data)
 
 
+@app.route('/api/raw_text/<run_id>')
+@login_required
+def api_raw_text(run_id):
+    """Return the raw plain text of scraped articles for a run."""
+    safe_id = os.path.basename(run_id)
+    raw_file = os.path.join(RUNS_DIR, f'{safe_id}_raw.txt')
+    if not os.path.exists(raw_file):
+        return jsonify({'error': 'Raw text not available for this run'}), 404
+    with open(raw_file, 'r', encoding='utf-8') as f:
+        text = f.read()
+    return jsonify({'text': text})
+
+
 @app.route('/api/stop_run/<run_id>', methods=['POST'])
 @login_required
 def api_stop_run(run_id):
@@ -379,6 +392,10 @@ def delete_run(run_id):
             excel_path = os.path.join(OUTPUTS_DIR, run_data['excel_file'])
             if os.path.exists(excel_path):
                 os.remove(excel_path)
+        # Also remove raw text file if it exists
+        raw_file = os.path.join(RUNS_DIR, f'{run_id}_raw.txt')
+        if os.path.exists(raw_file):
+            os.remove(raw_file)
         os.remove(run_file)
         flash('Run deleted', 'success')
     return redirect(url_for('dashboard'))
@@ -544,6 +561,39 @@ def _check_stopped(run_data, stop_event):
     return False
 
 
+def _build_raw_text(articles):
+    """Build plain text dump of all scraped articles for user to copy/paste."""
+    lines = []
+    for art in articles:
+        parts = []
+        if art.get('source'):
+            parts.append(f"Source: {art['source']}")
+        if art.get('time'):
+            parts.append(f"Time: {art['time']}")
+        if art.get('category'):
+            parts.append(f"Category: {art['category']}")
+        if art.get('title'):
+            parts.append(f"Title: {art['title']}")
+        if art.get('summary'):
+            parts.append(f"Summary: {art['summary']}")
+        tickers = art.get('tickers', [])
+        if tickers:
+            ticker_str = ', '.join(f"{t['symbol']} ({t['name']})" for t in tickers if t.get('symbol'))
+            if ticker_str:
+                parts.append(f"Tickers: {ticker_str}")
+        if art.get('url'):
+            parts.append(f"URL: {art['url']}")
+        lines.append('\n'.join(parts))
+    return '\n\n---\n\n'.join(lines)
+
+
+def _save_raw_text(run_id, raw_text):
+    """Save raw article text to a separate file alongside the run JSON."""
+    filepath = os.path.join(RUNS_DIR, f'{run_id}_raw.txt')
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(raw_text)
+
+
 def _background_run(run_id, source, config, stop_event=None):
     """Execute scrape + classify + excel in a background thread."""
     run_data = load_run(run_id)
@@ -565,6 +615,12 @@ def _background_run(run_id, source, config, stop_event=None):
             articles = scrape_single_source(source, config)
 
         run_data['article_count'] = len(articles)
+
+        # Save raw plain text of all articles
+        if articles:
+            raw_text = _build_raw_text(articles)
+            _save_raw_text(run_id, raw_text)
+            run_data['has_raw_text'] = True
         _add_log(run_data, f'Scraping complete: {len(articles)} articles found')
 
         if not articles:
@@ -709,6 +765,12 @@ def scheduled_run():
             articles = scrape_all_sources(config)
             run_data['article_count'] = len(articles)
             _add_log(run_data, f'Scraping complete: {len(articles)} articles')
+
+            # Save raw plain text of all articles
+            if articles:
+                raw_text = _build_raw_text(articles)
+                _save_raw_text(run_id, raw_text)
+                run_data['has_raw_text'] = True
 
             if articles:
                 run_data['status'] = 'classifying'
